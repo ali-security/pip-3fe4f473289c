@@ -1,6 +1,7 @@
 """Base Command class, and related routines"""
 from __future__ import absolute_import
 
+import contextlib
 import logging
 import os
 import sys
@@ -23,7 +24,7 @@ from pip.status_codes import (
 )
 from pip.utils import deprecation, get_prog, normalize_path
 from pip.utils.logging import IndentingFormatter
-from pip.utils.outdated import pip_version_check
+from pip.utils.outdated import pip_version_check_emit, pip_version_check_fetch
 
 
 __all__ = ['Command']
@@ -97,6 +98,45 @@ class Command(object):
         session.auth.prompting = not options.no_input
 
         return session
+
+    @contextlib.contextmanager
+    def pip_version_check(self, options, args):
+        """
+        Do the pip version check if not disabled.
+
+        The check itself runs before the wrapped command body, so that
+        nothing the command installs is imported or used by it; the upgrade
+        prompt, if any, is only displayed once the command body is done.
+        """
+        if (options.disable_pip_version_check or
+                getattr(options, "no_index", False)):
+            yield
+            return
+
+        upgrade_prompt = None
+        try:
+            # Check if we're using the latest version of pip available
+            with self._build_session(
+                    options,
+                    retries=0,
+                    timeout=min(5, options.timeout)) as session:
+                upgrade_prompt = pip_version_check_fetch(session)
+        except Exception:
+            logger.debug(
+                "There was an error checking the latest version of pip",
+                exc_info=True,
+            )
+
+        try:
+            yield
+        finally:
+            try:
+                pip_version_check_emit(upgrade_prompt)
+            except Exception:
+                logger.debug(
+                    "There was an error checking the latest version of pip",
+                    exc_info=True,
+                )
 
     def parse_args(self, args):
         # factored out for testability
@@ -212,7 +252,8 @@ class Command(object):
                 sys.exit(VIRTUALENV_NOT_FOUND)
 
         try:
-            status = self.run(options, args)
+            with self.pip_version_check(options, args):
+                status = self.run(options, args)
             # FIXME: all commands should return an exit status
             # and when it is done, isinstance is not needed anymore
             if isinstance(status, int):
@@ -241,15 +282,6 @@ class Command(object):
             logger.critical('Exception:', exc_info=True)
 
             return UNKNOWN_ERROR
-        finally:
-            # Check if we're using the latest version of pip available
-            if (not options.disable_pip_version_check and not
-                    getattr(options, "no_index", False)):
-                with self._build_session(
-                        options,
-                        retries=0,
-                        timeout=min(5, options.timeout)) as session:
-                    pip_version_check(session)
 
         return SUCCESS
 

@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+import contextlib
 import logging
 import operator
 import os
@@ -10,6 +11,9 @@ try:
     import wheel
 except ImportError:
     wheel = None
+
+from pip._vendor.packaging.requirements import InvalidRequirement, Requirement
+from pip._vendor.packaging.utils import canonicalize_name
 
 from pip.req import RequirementSet
 from pip.basecommand import RequirementCommand
@@ -26,6 +30,14 @@ from pip.wheel import WheelCache, WheelBuilder
 
 
 logger = logging.getLogger(__name__)
+
+
+def _arg_refers_to_pip(arg):
+    try:
+        req = Requirement(arg)
+    except InvalidRequirement:
+        return False
+    return canonicalize_name(req.name) == "pip"
 
 
 class InstallCommand(RequirementCommand):
@@ -188,6 +200,17 @@ class InstallCommand(RequirementCommand):
 
         self.parser.insert_option_group(0, index_opts)
         self.parser.insert_option_group(0, cmd_opts)
+
+    @contextlib.contextmanager
+    def pip_version_check(self, options, args):
+        # Skip the self-version check when pip itself is a requirement. The
+        # running pip may be replaced mid-command, and the upgrade prompt
+        # is redundant.
+        if any(_arg_refers_to_pip(arg) for arg in args):
+            yield
+            return
+        with super(InstallCommand, self).pip_version_check(options, args):
+            yield
 
     def run(self, options, args):
         cmdoptions.resolve_wheel_no_use_binary(options)

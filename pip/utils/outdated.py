@@ -99,9 +99,26 @@ def pip_version_check(session):
     the active virtualenv or in the user's USER_CACHE_DIR keyed off the prefix
     of the pip script path.
     """
+    pip_version_check_emit(pip_version_check_fetch(session))
+
+
+def pip_version_check_fetch(session):
+    """Compute the pip upgrade prompt, if any, before the command runs.
+
+    Limit the frequency of checks to once per week. State is stored either in
+    the active virtualenv or in the user's USER_CACHE_DIR keyed off the prefix
+    of the pip script path.
+
+    Everything the check needs (the installed pip version, the self-check
+    state file and the network stack) is used here, so that it can be done
+    before a command installs anything.
+
+    Pair with :func:`pip_version_check_emit`, which displays the prompt
+    after the command body runs.
+    """
     installed_version = get_installed_version("pip")
     if installed_version is None:
-        return
+        return None
 
     pip_version = packaging_version.parse(installed_version)
     pypi_version = None
@@ -148,11 +165,11 @@ def pip_version_check(session):
                 pip_cmd = "python -m pip"
             else:
                 pip_cmd = "pip"
-            logger.warning(
+            return (
                 "You are using pip version %s, however version %s is "
                 "available.\nYou should consider upgrading via the "
-                "'%s install --upgrade pip' command.",
-                pip_version, pypi_version, pip_cmd
+                "'%s install --upgrade pip' command." %
+                (pip_version, pypi_version, pip_cmd)
             )
 
     except Exception:
@@ -160,3 +177,11 @@ def pip_version_check(session):
             "There was an error checking the latest version of pip",
             exc_info=True,
         )
+
+    return None
+
+
+def pip_version_check_emit(upgrade_prompt):
+    """Emit the upgrade prompt captured by :func:`pip_version_check_fetch`."""
+    if upgrade_prompt is not None:
+        logger.warning("%s", upgrade_prompt)
