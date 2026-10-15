@@ -54,7 +54,8 @@ __all__ = ['get_file_content',
            'is_url', 'url_to_path', 'path_to_url',
            'is_archive_file', 'unpack_vcs_link',
            'unpack_file_url', 'is_vcs_url', 'is_file_url',
-           'unpack_http_url', 'unpack_url']
+           'unpack_http_url', 'unpack_url',
+           'parse_content_disposition', 'sanitize_content_filename']
 
 
 logger = logging.getLogger(__name__)
@@ -784,6 +785,27 @@ class PipXmlrpcTransport(xmlrpc_client.Transport):
             raise
 
 
+def sanitize_content_filename(filename):
+    """
+    Sanitize the "filename" value from a Content-Disposition header.
+    """
+    return os.path.basename(filename)
+
+
+def parse_content_disposition(content_disposition, default_filename):
+    """
+    Parse the "filename" value from a Content-Disposition header, and
+    return the default filename if the result is empty.
+    """
+    _type, params = cgi.parse_header(content_disposition)
+    filename = params.get('filename')
+    if filename:
+        # We need to sanitize the filename to prevent directory traversal
+        # in case the filename contains ".." path parts.
+        filename = sanitize_content_filename(filename)
+    return filename or default_filename
+
+
 def unpack_url(link, location, download_dir=None,
                only_download=False, session=None, hashes=None):
     """Unpack link.
@@ -864,10 +886,7 @@ def _download_http_url(link, session, temp_dir, hashes):
     # Have a look at the Content-Disposition header for a better guess
     content_disposition = resp.headers.get('content-disposition')
     if content_disposition:
-        type, params = cgi.parse_header(content_disposition)
-        # We use ``or`` here because we don't want to use an "empty" value
-        # from the filename param.
-        filename = params.get('filename') or filename
+        filename = parse_content_disposition(content_disposition, filename)
     ext = splitext(filename)[1]
     if not ext:
         ext = mimetypes.guess_extension(content_type)
