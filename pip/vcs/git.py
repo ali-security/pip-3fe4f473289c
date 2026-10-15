@@ -175,7 +175,13 @@ class Git(VersionControl):
         """Yields tuples of (commit, ref) for branches and tags"""
         output = self.run_command(['show-ref'],
                                   show_stdout=False, cwd=location)
-        for line in output.strip().splitlines():
+        # NOTE: We do not use splitlines here since that would split on other
+        #       unicode separators, which can be maliciously used to install a
+        #       different revision.
+        for line in output.strip().split("\n"):
+            line = line.rstrip("\r")
+            if not line:
+                continue
             commit, ref = line.split(' ', 1)
             yield commit.strip(), ref.strip()
 
