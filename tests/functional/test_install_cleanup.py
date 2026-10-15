@@ -3,7 +3,7 @@ import pytest
 
 from os.path import exists
 
-from tests.lib.local_repos import local_checkout
+from tests.lib import _create_test_package, path_to_url
 from pip.locations import write_delete_marker_file
 from pip.status_codes import PREVIOUS_BUILD_DIR_ERROR
 
@@ -41,14 +41,14 @@ def test_cleanup_after_install_editable_from_hg(script, tmpdir):
     Test clean up after cloning from Mercurial.
 
     """
+    # The original remote (hg+https://bitbucket.org/ianb/scripttest) is
+    # gone: Bitbucket deleted all Mercurial repositories in 2020. Clone an
+    # equivalent local Mercurial repository instead.
+    pkg_path = _create_test_package(script, vcs='hg')
     script.pip(
         'install',
         '-e',
-        '%s#egg=ScriptTest' %
-        local_checkout(
-            'hg+https://bitbucket.org/ianb/scripttest',
-            tmpdir.join("cache"),
-        ),
+        'hg+%s#egg=version_pkg' % path_to_url(pkg_path),
         expect_error=True,
     )
     build = script.venv_path / 'build'

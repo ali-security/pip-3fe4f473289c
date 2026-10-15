@@ -175,7 +175,7 @@ def test_git_with_editable_where_egg_contains_dev_string(script, tmpdir):
         'install', '-e',
         '%s#egg=django-devserver' %
         local_checkout(
-            'git+git://github.com/dcramer/django-devserver.git',
+            'git+https://github.com/dcramer/django-devserver.git',
             tmpdir.join("cache")
         )
     )
@@ -192,7 +192,7 @@ def test_git_with_non_editable_where_egg_contains_dev_string(script, tmpdir):
         'install',
         '%s#egg=django-devserver' %
         local_checkout(
-            'git+git://github.com/dcramer/django-devserver.git',
+            'git+https://github.com/dcramer/django-devserver.git',
             tmpdir.join("cache")
         ),
     )

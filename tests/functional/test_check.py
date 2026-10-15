@@ -1,5 +1,12 @@
 import pytest
 
+from tests.lib import PYPI_AT_RELEASE_INDEX
+
+# Resolve against PyPI as of the pip 9.0.3 release: live PyPI now serves
+# dependency versions (PasteDeploy 3, argon2-cffi-bindings, ...) that no longer
+# install cleanly on these Pythons, which adds unexpected stderr output.
+INDEX = ('--index-url', PYPI_AT_RELEASE_INDEX)
+
 
 def matches_expected_lines(string, expected_lines):
     # Ignore empty lines
@@ -23,7 +30,7 @@ def test_check_clean(script):
 @pytest.mark.network
 def test_check_missing_dependency(script):
     # this will also install ipython, a dependency
-    script.pip('install', 'ipdb==0.7')
+    script.pip('install', 'ipdb==0.7', *INDEX)
 
     # deliberately remove the dependency
     script.pip('uninstall', 'ipython', '--yes')
@@ -40,8 +47,8 @@ def test_check_missing_dependency(script):
 @pytest.mark.network
 def test_check_missing_dependency_normalize_case(script):
     # Install some things
-    script.pip('install', 'devpi-web==2.2.2')
-    script.pip('install', 'pyramid==1.5.2')
+    script.pip('install', 'devpi-web==2.2.2', *INDEX)
+    script.pip('install', 'pyramid==1.5.2', *INDEX)
 
     # deliberately remove some dependencies
     script.pip('uninstall', 'pygments', '--yes')
@@ -60,10 +67,10 @@ def test_check_missing_dependency_normalize_case(script):
 @pytest.mark.network
 def test_check_broken_dependency(script):
     # this will also install a compatible version of jinja2
-    script.pip('install', 'flask==0.10.1')
+    script.pip('install', 'flask==0.10.1', *INDEX)
 
     # deliberately change dependency to a version that is too old
-    script.pip('install', 'jinja2==2.3')
+    script.pip('install', 'jinja2==2.3', *INDEX)
 
     result = script.pip('check', expect_error=True)
 
@@ -77,14 +84,14 @@ def test_check_broken_dependency(script):
 @pytest.mark.network
 def test_check_broken_dependency_and_missing_dependency(script):
     # this will also install a compatible version of jinja2
-    script.pip('install', 'flask==0.10.1')
-    script.pip('install', 'pyramid==1.5.2')
+    script.pip('install', 'flask==0.10.1', *INDEX)
+    script.pip('install', 'pyramid==1.5.2', *INDEX)
 
     # deliberately remove a dependency
     script.pip('uninstall', 'zope.deprecation', '--yes')
 
     # deliberately change dependency to a version that is too old
-    script.pip('install', 'jinja2==2.3')
+    script.pip('install', 'jinja2==2.3', *INDEX)
 
     result = script.pip('check', expect_error=True)
 

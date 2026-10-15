@@ -16,6 +16,23 @@ from pip.req import InstallRequirement
 from pip.utils import rmtree
 
 
+def _easy_install(script, req):
+    """
+    easy_install ``req`` from a local find-links directory.
+
+    The setuptools 28.8.0 that virtualenv 15.1 puts in the test environment
+    does not send SNI, so its easy_install can no longer reach PyPI (pypi.org
+    and files.pythonhosted.org are only served to SNI clients). Fetch the
+    sdist with pip first and let easy_install pick it up from there.
+    """
+    find_links = script.scratch_path / 'easy_install_links'
+    script.pip(
+        'download', '--no-deps', '--no-binary', ':all:', '-d', find_links, req,
+    )
+    return script.run('easy_install', '-f', find_links, req,
+                      expect_stderr=True)
+
+
 @pytest.mark.network
 def test_simple_uninstall(script):
     """
@@ -61,7 +78,7 @@ def test_uninstall_with_scripts(script):
     Uninstall an easy_installed package with scripts.
 
     """
-    result = script.run('easy_install', 'PyLogo', expect_stderr=True)
+    result = _easy_install(script, 'PyLogo')
     easy_install_pth = script.site_packages / 'easy-install.pth'
     pylogo = sys.platform == 'win32' and 'pylogo' or 'PyLogo'
     assert(pylogo in result.files_updated[easy_install_pth].bytes)
@@ -79,7 +96,7 @@ def test_uninstall_easy_install_after_import(script):
     Uninstall an easy_installed package after it's been imported
 
     """
-    result = script.run('easy_install', 'INITools==0.2', expect_stderr=True)
+    result = _easy_install(script, 'INITools==0.2')
     # the import forces the generation of __pycache__ if the version of python
     # supports it
     script.run('python', '-c', "import initools")
@@ -202,9 +219,7 @@ def test_uninstall_easy_installed_console_scripts(script):
     """
     Test uninstalling package with console_scripts that is easy_installed.
     """
-    args = ['easy_install']
-    args.append('discover')
-    result = script.run(*args, **{"expect_stderr": True})
+    result = _easy_install(script, 'discover')
     assert script.bin / 'discover' + script.exe in result.files_created, (
         sorted(result.files_created.keys())
     )
@@ -271,7 +286,7 @@ def _test_uninstall_editable_with_source_outside_venv(
     result = script.run(
         'git', 'clone',
         local_repo(
-            'git+git://github.com/pypa/pip-test-package',
+            'git+https://github.com/pypa/pip-test-package',
             cache_dir,
         ),
         tmpdir,

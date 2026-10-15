@@ -112,6 +112,13 @@ def isolate(tmpdir):
     with open(os.path.join(home_dir, ".config", "git", "config"), "wb") as fp:
         fp.write(
             b"[user]\n\tname = pip\n\temail = pypa-dev@googlegroups.com\n"
+            # Modern git (>= 2.28) prints a multi-line "hint:" about the
+            # default branch name on stderr for every `git init`, which the
+            # test harness treats as unexpected stderr output.
+            b"[init]\n\tdefaultBranch = master\n"
+            # git >= 2.38.1 (CVE-2022-39253) refuses file:// submodules by
+            # default; the submodule tests use local repositories.
+            b"[protocol \"file\"]\n\tallow = always\n"
         )
 
 

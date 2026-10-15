@@ -1,12 +1,13 @@
 from __future__ import absolute_import
 
 import os
+import shutil
 import subprocess
-
-from pip._vendor.six.moves.urllib import request as urllib_request
+import tarfile
+import tempfile
 
 from pip.vcs import subversion, git, bazaar, mercurial
-from tests.lib import path_to_url
+from tests.lib import DATA_DIR, path_to_url
 
 
 if hasattr(subprocess, "check_call"):
@@ -20,21 +21,34 @@ def _create_initools_repository(directory):
 
 
 def _dump_initools_repository(directory):
-    filename, _ = urllib_request.urlretrieve(
-        'http://bitbucket.org/hltbra/pip-initools-dump/raw/8b55c908a320/'
-        'INITools_modified.dump'
-    )
-    initools_folder = os.path.join(directory, 'INITools')
-    devnull = open(os.devnull, 'w')
-    dump = open(filename)
-    subprocess_call(
-        ['svnadmin', 'load', initools_folder],
-        stdin=dump,
-        stdout=devnull,
-    )
-    dump.close()
-    devnull.close()
-    os.remove(filename)
+    # The INITools svn dump this used to load
+    # (bitbucket.org/hltbra/pip-initools-dump) no longer exists, and the
+    # original repository (svn.colorstudy.com) is long gone. Build an
+    # equivalent repository locally: trunk/ holds the INITools 0.2 source
+    # shipped in tests/data, padded to more than 10 revisions because some
+    # tests check out trunk@10.
+    initools_url = path_to_url(os.path.join(directory, 'INITools'))
+    tmp = tempfile.mkdtemp()
+    try:
+        sdist = tarfile.open(
+            os.path.join(DATA_DIR, 'packages', 'INITools-0.2.tar.gz')
+        )
+        sdist.extractall(tmp)
+        sdist.close()
+        source = os.path.join(tmp, 'INITools-0.2')
+        shutil.rmtree(os.path.join(source, 'INITools.egg-info'))
+        os.remove(os.path.join(source, 'PKG-INFO'))
+        subprocess_call([
+            'svn', 'import', '-q', '-m', 'Import INITools 0.2',
+            source, initools_url + '/trunk',
+        ])
+        for rev in range(10):
+            subprocess_call([
+                'svn', 'mkdir', '-q', '--parents', '-m', 'Pad history',
+                '%s/tags/padding-%d' % (initools_url, rev),
+            ])
+    finally:
+        shutil.rmtree(tmp)
 
 
 def _create_svn_repository_for_initools(directory):

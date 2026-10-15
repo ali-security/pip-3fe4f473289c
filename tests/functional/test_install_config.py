@@ -84,24 +84,24 @@ def test_command_line_append_flags(script, virtualenv, data):
     variables.
 
     """
-    script.environ['PIP_FIND_LINKS'] = 'http://pypi.pinaxproject.com'
+    script.environ['PIP_FIND_LINKS'] = 'https://test.pypi.org'
     result = script.pip(
         'install', '-vvv', 'INITools', '--trusted-host',
-        'pypi.pinaxproject.com',
+        'test.pypi.org',
         expect_error=True,
     )
     assert (
-        "Analyzing links from page http://pypi.pinaxproject.com"
+        "Analyzing links from page https://test.pypi.org"
         in result.stdout
     )
     virtualenv.clear()
     result = script.pip(
         'install', '-vvv', '--find-links', data.find_links, 'INITools',
-        '--trusted-host', 'pypi.pinaxproject.com',
+        '--trusted-host', 'test.pypi.org',
         expect_error=True,
     )
     assert (
-        "Analyzing links from page http://pypi.pinaxproject.com"
+        "Analyzing links from page https://test.pypi.org"
         in result.stdout
     )
     assert "Skipping link %s" % data.find_links in result.stdout
@@ -114,16 +114,16 @@ def test_command_line_appends_correctly(script, data):
 
     """
     script.environ['PIP_FIND_LINKS'] = (
-        'http://pypi.pinaxproject.com %s' % data.find_links
+        'https://test.pypi.org %s' % data.find_links
     )
     result = script.pip(
         'install', '-vvv', 'INITools', '--trusted-host',
-        'pypi.pinaxproject.com',
+        'test.pypi.org',
         expect_error=True,
     )
 
     assert (
-        "Analyzing links from page http://pypi.pinaxproject.com"
+        "Analyzing links from page https://test.pypi.org"
         in result.stdout
     ), result.stdout
     assert "Skipping link %s" % data.find_links in result.stdout

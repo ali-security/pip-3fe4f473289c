@@ -15,6 +15,13 @@ from tests.lib.path import Path, curdir, u
 DATA_DIR = Path(__file__).folder.folder.join("data").abspath
 SRC_DIR = Path(__file__).abspath.folder.folder.folder
 
+# PyPI index frozen at the pip 9.0.3 release date (2018-03-22). Tests that
+# resolve unpinned transitive dependencies from the live index break as new
+# releases drop Python 2 / old-setuptools support; use this index for them.
+PYPI_AT_RELEASE_INDEX = (
+    'https://:2018-03-22@time-machines-pypi.sealsecurity.io/'
+)
+
 pyversion = sys.version[:3]
 pyversion_tuple = sys.version_info
 

@@ -4,6 +4,7 @@ import textwrap
 import pytest
 
 from tests.lib import (pyversion, path_to_url, requirements_file,
+                       PYPI_AT_RELEASE_INDEX,
                        _create_test_package_with_subdirectory)
 from tests.lib.local_repos import local_checkout
 
@@ -171,7 +172,7 @@ def test_install_local_editable_with_extras(script, data):
 @pytest.mark.network
 def test_install_collected_dependencies_first(script):
     result = script.pip(
-        'install', 'paramiko',
+        'install', '--index-url', PYPI_AT_RELEASE_INDEX, 'paramiko',
     )
     text = [line for line in result.stdout.split('\n')
             if 'Installing' in line][0]

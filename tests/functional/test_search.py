@@ -5,6 +5,12 @@ from pip.commands.search import (highest_version,
 from pip.status_codes import NO_MATCHES_FOUND, SUCCESS
 from tests.lib import pyversion
 
+# PyPI permanently disabled the XML-RPC ``search`` method (2020-12), so any
+# search against the live index now fails with Fault -32500.
+skip_pypi_search = pytest.mark.skip(
+    reason="PyPI XML-RPC search API permanently disabled (Fault -32500)"
+)
+
 
 if pyversion >= '3':
     VERBOSE_FALSE = False
@@ -59,6 +65,7 @@ def test_pypi_xml_transformation():
     assert transform_hits(pypi_hits) == expected
 
 
+@skip_pypi_search
 @pytest.mark.network
 def test_search(script):
     """
@@ -72,6 +79,7 @@ def test_search(script):
     )
 
 
+@skip_pypi_search
 @pytest.mark.network
 def test_multiple_search(script):
     """
@@ -94,6 +102,7 @@ def test_search_missing_argument(script):
     assert 'ERROR: Missing required argument (search query).' in result.stderr
 
 
+@skip_pypi_search
 @pytest.mark.network
 def test_run_method_should_return_success_when_find_packages():
     """
@@ -106,6 +115,7 @@ def test_run_method_should_return_success_when_find_packages():
     assert status == SUCCESS
 
 
+@skip_pypi_search
 @pytest.mark.network
 def test_run_method_should_return_no_matches_found_when_does_not_find_pkgs():
     """
@@ -118,6 +128,7 @@ def test_run_method_should_return_no_matches_found_when_does_not_find_pkgs():
     assert status == NO_MATCHES_FOUND
 
 
+@skip_pypi_search
 @pytest.mark.network
 def test_search_should_exit_status_code_zero_when_find_packages(script):
     """
@@ -127,6 +138,7 @@ def test_search_should_exit_status_code_zero_when_find_packages(script):
     assert result.returncode == SUCCESS
 
 
+@skip_pypi_search
 @pytest.mark.network
 def test_search_exit_status_code_when_finds_no_package(script):
     """

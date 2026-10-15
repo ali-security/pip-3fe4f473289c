@@ -309,7 +309,13 @@ def test_finder_priority_page_over_deplink():
     # Check that the dependency_link is last
     assert all_versions[-1].location.url.startswith('https://warehouse')
     link = finder.find_requirement(req, False)
-    assert link.url.startswith("https://pypi"), link
+    # PyPI now serves its page links from the files.pythonhosted.org CDN rather
+    # than from pypi.python.org/packages/..., so accept either host here. What
+    # this test actually asserts is that the page link beat the dependency link
+    # added above (which would be a https://warehouse.python.org URL).
+    assert link.url.startswith(
+        ("https://pypi", "https://files.pythonhosted.org")
+    ), link
 
 
 def test_finder_priority_nonegg_over_eggfragments():

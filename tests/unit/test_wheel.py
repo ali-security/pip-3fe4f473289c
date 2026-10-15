@@ -260,7 +260,9 @@ class TestWheelFile(object):
         from tempfile import mkdtemp
         from shutil import rmtree
 
-        filepath = '../data/packages/meta-1.0-py2.py3-none-any.whl'
+        filepath = os.path.join(os.path.dirname(__file__),
+                                '..', 'data', 'packages',
+                                'meta-1.0-py2.py3-none-any.whl')
         if not os.path.exists(filepath):
             pytest.skip("%s does not exist" % filepath)
         try:
