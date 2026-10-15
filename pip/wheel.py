@@ -37,6 +37,7 @@ from pip.utils.ui import open_spinner
 from pip.utils.logging import indent_log
 from pip.utils.setuptools_build import SETUPTOOLS_SHIM
 from pip._vendor.distlib.scripts import ScriptMaker
+from pip._vendor.distlib.util import get_export_entry
 from pip._vendor import pkg_resources
 from pip._vendor.packaging.utils import canonicalize_name
 from pip._vendor.six.moves import configparser
@@ -237,6 +238,55 @@ def get_entrypoints(filename):
     return console, gui
 
 
+def _script_within_dir(name, scripts_dir):
+    """Return whether script ``name`` resolves to a path inside the
+    ``scripts_dir``.
+
+    distlib joins the entry point name onto the scripts directory, so a name
+    with path separators or ``..`` components can resolve elsewhere.
+    """
+    root = os.path.normpath(scripts_dir)
+    dest = os.path.normpath(os.path.join(scripts_dir, name))
+    return dest.startswith(root + os.sep)
+
+
+def _entrypoint_names(specification):
+    """Yield the script names a ``specification`` can be written under.
+
+    The vendored distlib only captures a restricted set of characters as the
+    export entry name, so the name it reports can differ from the name written
+    in the wheel metadata. Both are validated so a crafted metadata name cannot
+    slip past on either side of that difference.
+    """
+    entry = get_export_entry(specification)
+    if entry is None:
+        return []
+
+    names = [entry.name]
+    # Trailing whitespace before the '=' is not part of the script name; a
+    # leading space is kept, matching how distlib treats it as a literal.
+    raw_name = specification.split('=', 1)[0].rstrip()
+    if raw_name != entry.name:
+        names.append(raw_name)
+    return names
+
+
+def _raise_for_invalid_entrypoint(specification, scripts_dir):
+    for name in _entrypoint_names(specification):
+        if not _script_within_dir(name, scripts_dir):
+            raise InstallationError(
+                "Invalid script entry point name %r: the script would be "
+                "installed outside the scripts directory (%s)."
+                % (name, scripts_dir)
+            )
+
+
+class PipScriptMaker(ScriptMaker):
+    def make(self, specification, options=None):
+        _raise_for_invalid_entrypoint(specification, self.target_dir)
+        return ScriptMaker.make(self, specification, options)
+
+
 def move_wheel_files(name, req, wheeldir, user=False, home=None, root=None,
                      pycompile=True, scheme=None, isolated=False, prefix=None):
     """Install a wheel"""
@@ -376,7 +426,7 @@ def move_wheel_files(name, req, wheeldir, user=False, home=None, root=None,
             dest = scheme[subdir]
             clobber(source, dest, False, fixer=fixer, filter=filter)
 
-    maker = ScriptMaker(None, scheme['scripts'])
+    maker = PipScriptMaker(None, scheme['scripts'])
 
     # Ensure old scripts are overwritten.
     # See https://github.com/pypa/pip/issues/1800

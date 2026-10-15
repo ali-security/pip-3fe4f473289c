@@ -1,4 +1,5 @@
 """Tests for wheel binary packages and .dist-info."""
+import logging
 import os
 
 import pytest
@@ -7,7 +8,8 @@ from mock import patch, Mock
 from pip._vendor.packaging.requirements import Requirement
 from pip import pep425tags, wheel
 from pip.compat import expanduser, WINDOWS
-from pip.exceptions import InvalidWheelFilename, UnsupportedWheel
+from pip.exceptions import (
+    InstallationError, InvalidWheelFilename, UnsupportedWheel)
 from pip.utils import unpack_file
 
 
@@ -369,10 +371,70 @@ class TestMoveWheelFiles(object):
         assert not os.path.isdir(
             os.path.join(self.dest_dist_info, 'empty_dir'))
 
+    @pytest.mark.parametrize("bad_name", ["../../outside", "..", "."])
+    @pytest.mark.parametrize("gui", [False, True])
+    def test_script_maker_rejects_entry_point_path_traversal(self, tmpdir,
+                                                             bad_name, gui):
+        """An entry point name with separators or ``..`` must not install a
+        script outside the scripts directory.
+        """
+        scripts_dir = os.path.join(str(tmpdir), 'dest', 'bin')
+        os.makedirs(scripts_dir)
+        maker = wheel.PipScriptMaker(None, scripts_dir)
+        maker.clobber = True
+        maker.variants = set(('', ))
+        options = {'gui': True} if gui else None
+
+        with pytest.raises(InstallationError) as e:
+            maker.make('%s = sample:main' % bad_name, options)
+
+        assert "outside the scripts directory" in str(e.value)
+        # Nothing was written outside the scripts directory.
+        assert os.listdir(scripts_dir) == []
+        assert not os.path.exists(os.path.join(str(tmpdir), 'outside'))
+        # The parent of the scripts directory gained nothing either.
+        assert os.listdir(os.path.join(str(tmpdir), 'dest')) == ['bin']
+
+    def test_script_maker_allows_valid_entry_point(self, tmpdir):
+        """A legitimate entry point name still generates its script."""
+        scripts_dir = os.path.join(str(tmpdir), 'bin')
+        os.makedirs(scripts_dir)
+        maker = wheel.PipScriptMaker(None, scripts_dir)
+        maker.clobber = True
+        maker.variants = set(('', ))
+
+        generated = maker.make('sample = sample:main')
+
+        assert generated == [os.path.join(scripts_dir, 'sample')]
+        assert os.path.isfile(os.path.join(scripts_dir, 'sample'))
+
+    @pytest.mark.parametrize("bad_name", ["../../outside", "..", "."])
+    @pytest.mark.parametrize(
+        "entry_point_type", ["console_scripts", "gui_scripts"])
+    def test_move_wheel_files_rejects_entry_point_path_traversal(
+            self, data, tmpdir, bad_name, entry_point_type):
+        """Installing a wheel whose metadata declares a traversing entry point
+        name fails instead of writing a script outside the scripts directory.
+        """
+        self.prep(data, tmpdir)
+        with open(os.path.join(self.src_dist_info, 'entry_points.txt'),
+                  'w') as fp:
+            fp.write("[%s]\n%s = sample:main\n" % (entry_point_type, bad_name))
+
+        with pytest.raises(InstallationError) as e:
+            wheel.move_wheel_files(
+                self.name, self.req, self.src, scheme=self.scheme)
+
+        assert "outside the scripts directory" in str(e.value)
+        # Nothing was written outside the install destination.
+        assert not os.path.exists(os.path.join(str(tmpdir), 'outside'))
+        assert not os.path.exists(os.path.join(self.dest, 'outside'))
+
 
 class TestWheelBuilder(object):
 
     def test_skip_building_wheels(self, caplog):
+        caplog.set_level(logging.INFO)
         with patch('pip.wheel.WheelBuilder._build_one') as mock_build_one:
             wheel_req = Mock(is_wheel=True, editable=False, constraint=False)
             reqset = Mock(requirements=Mock(values=lambda: [wheel_req]),
@@ -392,3 +454,63 @@ class TestWheelCache:
     def test_falsey_path_none(self):
         wc = wheel.WheelCache(False, None)
         assert wc._cache_dir is None
+
+
+@pytest.mark.parametrize(
+    "name, within",
+    [
+        ("pip", True),
+        ("pip3.13", True),
+        ("foo-bar.baz", True),
+        ("...", True),  # a literal filename, not a path component
+        ("sub/script", True),  # in-tree subdirectory
+        ("a/../b", True),
+        ("sub\\script", True),  # backslash stays in-tree on POSIX and Windows
+        (" ../../inside", True),  # distlib keeps a leading space; in-tree
+        ("../outside", False),
+        ("../../outside", False),
+        ("a/../../outside", False),
+        # absolute path; os.path.join drops the root
+        ("/etc/cron.d/outside", False),
+        # "." and ".." pass PyPI's [\w.-]+ name check but must be rejected.
+        (".", False),
+        ("..", False),
+        ("", False),
+    ],
+)
+def test_script_within_dir(name, within):
+    assert wheel._script_within_dir(name, "/srv/env/bin") is within
+
+
+@pytest.mark.parametrize(
+    "specification, expected",
+    [
+        # A plain name is reported once.
+        ("pip = pip.main:pip", ["pip"]),
+        # The vendored distlib only captures ``[\w.+-]+`` as the entry name, so
+        # it truncates a traversing metadata name; the raw name is checked too.
+        ("../../outside = sample:main", ["outside", "../../outside"]),
+        (".. = sample:main", [".."]),
+        # A leading space is kept, matching the reference's semantics.
+        (" ../../inside = sample:main", ["inside", " ../../inside"]),
+    ],
+)
+def test_entrypoint_names_includes_raw_metadata_name(specification, expected):
+    assert wheel._entrypoint_names(specification) == expected
+
+
+def test_entrypoint_names_ignores_non_entry_point():
+    assert wheel._entrypoint_names("some/script.py") == []
+
+
+def test_script_within_dir_allows_doubled_slash_root():
+    # A scripts directory can have a doubled leading slash
+    assert wheel._script_within_dir("pip", "//srv/env/bin") is True
+    assert wheel._script_within_dir("../outside", "//srv/env/bin") is False
+
+
+@pytest.mark.skipif(not WINDOWS, reason="drive letters only matter on Windows")
+def test_script_within_dir_rejects_other_drive():
+    # Validate that a script on a different drive is rejected,
+    # and doesn't throw an error
+    assert wheel._script_within_dir("D:\\outside", "C:\\env\\bin") is False
