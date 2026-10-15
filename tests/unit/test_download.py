@@ -15,7 +15,7 @@ from pip.exceptions import HashMismatch
 from pip.download import (
     PipSession, SafeFileCache, path_to_url, unpack_http_url, url_to_path,
     unpack_file_url, parse_content_disposition, sanitize_content_filename,
-    _download_http_url
+    _download_http_url, _copy_file, _check_download_dir
 )
 from pip.index import Link
 from pip.utils.hashes import Hashes
@@ -388,6 +388,114 @@ def test_download_http_url__no_directory_traversal(tmpdir):
     # The file should be downloaded to download_dir.
     actual = os.listdir(download_dir)
     assert actual == ['out_dir_file']
+
+
+@pytest.mark.parametrize("url", [
+    'http://www.example.com/..%2Fout_dir_file.tgz',
+    'http://www.example.com/a%2F..%2F..%2Fout_dir_file.tgz',
+    'http://www.example.com/%2e%2e%2fout_dir_file.tgz',
+])
+def test_download_http_url__no_directory_traversal_from_link(tmpdir, url):
+    """
+    Test that directory traversal doesn't happen on download when the
+    link's URL path carries percent-encoded ".." path parts and there is no
+    Content-Disposition header.
+    """
+    contents = b'downloaded'
+    link = Link(url)
+
+    session = Mock()
+    resp = MockResponse(contents)
+    resp.url = url
+    resp.headers = {
+        # Set the content-type to a random value to prevent
+        # mimetypes.guess_extension from guessing the extension.
+        'content-type': 'random',
+    }
+    session.get.return_value = resp
+
+    parent_dir = tmpdir.join('parent')
+    download_dir = parent_dir.join('download')
+    os.makedirs(download_dir)
+    file_path, content_type = _download_http_url(
+        link,
+        session,
+        download_dir,
+        hashes=None,
+    )
+    # The file should be downloaded to download_dir, not above it.
+    assert os.listdir(download_dir) == ['out_dir_file.tgz']
+    assert os.listdir(parent_dir) == ['download']
+    assert file_path == os.path.join(download_dir, 'out_dir_file.tgz')
+
+
+@pytest.mark.parametrize("content_disposition", [
+    'attachment;filename=".."',
+    'attachment;filename="."',
+])
+def test_download_http_url__rejects_parent_reference(
+    tmpdir, content_disposition
+):
+    """
+    A file name that reduces to a "." or ".." reference cannot be written
+    into the download directory and is rejected.
+    """
+    mock_url = 'http://www.example.com/whatever'
+    link = Link(mock_url)
+
+    session = Mock()
+    resp = MockResponse(b'downloaded')
+    resp.url = mock_url
+    resp.headers = {
+        'content-type': 'random',
+        'content-disposition': content_disposition,
+    }
+    session.get.return_value = resp
+
+    download_dir = tmpdir.join('download')
+    os.mkdir(download_dir)
+    with pytest.raises(ValueError):
+        _download_http_url(link, session, download_dir, hashes=None)
+    assert os.listdir(download_dir) == []
+
+
+def test_copy_file__no_directory_traversal_from_link(tmpdir):
+    """
+    Saving a downloaded file into the download directory must not escape it
+    when the link's URL path carries percent-encoded ".." path parts.
+    """
+    src = tmpdir.join('src.tgz')
+    _write_file(src, 'contents')
+    parent_dir = tmpdir.join('parent')
+    download_dir = parent_dir.join('download')
+    os.makedirs(download_dir)
+
+    link = Link('http://www.example.com/..%2Fout_dir_file.tgz')
+    _copy_file(src, download_dir, link)
+
+    assert os.listdir(download_dir) == ['out_dir_file.tgz']
+    assert os.listdir(parent_dir) == ['download']
+
+
+def test_check_download_dir__no_directory_traversal_from_link(tmpdir):
+    """
+    Looking up a previously downloaded file must not resolve to a file
+    outside the download directory when the link's URL path carries
+    percent-encoded ".." path parts.
+    """
+    parent_dir = tmpdir.join('parent')
+    download_dir = parent_dir.join('download')
+    os.makedirs(download_dir)
+    # A file sitting just outside the download directory.
+    _write_file(parent_dir.join('out_dir_file.tgz'), 'contents')
+
+    link = Link('http://www.example.com/..%2Fout_dir_file.tgz')
+    assert _check_download_dir(link, download_dir, None) is None
+
+    # The same name inside the download directory is still found.
+    inside = download_dir.join('out_dir_file.tgz')
+    _write_file(inside, 'contents')
+    assert _check_download_dir(link, download_dir, None) == inside
 
 
 class TestPipSession:

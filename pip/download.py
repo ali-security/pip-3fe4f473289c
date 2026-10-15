@@ -28,7 +28,8 @@ from pip.exceptions import InstallationError, HashMismatch
 from pip.models import PyPI
 from pip.utils import (splitext, rmtree, format_size, display_path,
                        backup_dir, ask_path_exists, unpack_file,
-                       ARCHIVE_EXTENSIONS, consume, call_subprocess)
+                       ARCHIVE_EXTENSIONS, consume, call_subprocess,
+                       as_path_component, join_within_directory)
 from pip.utils.encoding import auto_decode
 from pip.utils.filesystem import check_path_owner
 from pip.utils.logging import indent_log
@@ -608,7 +609,7 @@ def _download_url(resp, link, content_file, hashes):
 
 def _copy_file(filename, location, link):
     copy = True
-    download_location = os.path.join(location, link.filename)
+    download_location = join_within_directory(location, link.filename)
     if os.path.exists(download_location):
         response = ask_path_exists(
             'The file %s exists. (i)gnore, (w)ipe, (b)ackup, (a)abort' %
@@ -896,7 +897,9 @@ def _download_http_url(link, session, temp_dir, hashes):
         ext = os.path.splitext(resp.url)[1]
         if ext:
             filename += ext
-    file_path = os.path.join(temp_dir, filename)
+    # Validate the name as a single path component, so it can be joined onto
+    # the download directory without escaping it.
+    file_path = join_within_directory(temp_dir, as_path_component(filename))
     with open(file_path, 'wb') as content_file:
         _download_url(resp, link, content_file, hashes)
     return file_path, content_type
@@ -906,7 +909,7 @@ def _check_download_dir(link, download_dir, hashes):
     """ Check download_dir for previously downloaded file with correct hash
         If a correct file is found return its path else None
     """
-    download_path = os.path.join(download_dir, link.filename)
+    download_path = join_within_directory(download_dir, link.filename)
     if os.path.exists(download_path):
         # If already downloaded, does its hash match?
         logger.info('File was already downloaded %s', download_path)

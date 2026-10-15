@@ -18,7 +18,7 @@ from pip._vendor.six.moves.urllib import request as urllib_request
 from pip.compat import ipaddress
 from pip.utils import (
     cached_property, splitext, normalize_path,
-    ARCHIVE_EXTENSIONS, SUPPORTED_EXTENSIONS,
+    ARCHIVE_EXTENSIONS, SUPPORTED_EXTENSIONS, _to_path_component,
 )
 from pip.utils.deprecation import RemovedInPip10Warning
 from pip.utils.logging import indent_log
@@ -950,10 +950,16 @@ class Link(object):
     @property
     def filename(self):
         _, netloc, path, _, _ = urllib_parse.urlsplit(self.url)
-        name = posixpath.basename(path.rstrip('/')) or netloc
-        name = urllib_parse.unquote(name)
-        assert name, ('URL %r produced no filename' % self.url)
-        return name
+        # Decode the path exactly once, then reduce it to a single path
+        # component, so an encoded separator or "." / ".." reference can
+        # never end up in the name.
+        path = urllib_parse.unquote(path)
+        name = _to_path_component(posixpath.basename(path.rstrip('/')))
+        if name:
+            return name
+
+        # No component in the path; fall back to the netloc, dropping any auth.
+        return _to_path_component(netloc.rsplit('@', 1)[-1])
 
     @property
     def scheme(self):

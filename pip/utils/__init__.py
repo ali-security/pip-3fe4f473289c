@@ -257,6 +257,45 @@ def splitext(path):
     return base, ext
 
 
+# A path component is a single file name: percent-decoded once and reduced to
+# a basename, so it contains no path separator and is not a ``.`` or ``..``
+# reference. The empty string means "no component".
+def _to_path_component(name):
+    """Reduce ``name`` to a single path component, or ``""`` if it has none.
+
+    ``os.path.basename`` drops any directory part, drive letter, or separator;
+    a ``.``, ``..``, or empty result is not a component and becomes ``""``.
+    """
+    name = os.path.basename(name)
+    if name in ('', os.curdir, os.pardir):
+        return ''
+
+    return name
+
+
+def as_path_component(name):
+    """Like ``_to_path_component`` but reject the empty result.
+
+    Use where a file is about to be written, so a missing name is an error
+    rather than a silent fallback to the directory itself.
+    """
+    component = _to_path_component(name)
+    if not component:
+        raise ValueError('Unexpected file name derived from URL: %r' % name)
+
+    return component
+
+
+def join_within_directory(directory, component):
+    """Join a single path ``component`` onto ``directory``.
+
+    ``component`` must already be a single path component (see
+    ``as_path_component``), so it has no separator and is not a ``.`` or
+    ``..`` reference; the result can never escape ``directory``.
+    """
+    return os.path.join(directory, component)
+
+
 def renames(old, new):
     """Like os.renames(), but handles renaming across devices."""
     # Implementation borrowed from os.renames().
