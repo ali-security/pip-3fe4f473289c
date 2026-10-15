@@ -13,6 +13,7 @@ import shutil
 import tarfile
 import tempfile
 import warnings
+import zipfile
 
 import pytest
 
@@ -21,7 +22,8 @@ from mock import Mock, patch
 from pip.exceptions import (HashMismatch, HashMissing, InstallationError,
                             UnsupportedPythonVersion)
 from pip.utils import (egg_link_path, get_installed_distributions,
-                       untar_file, unzip_file, rmtree, normalize_path)
+                       unpack_file, untar_file, unzip_file, rmtree,
+                       normalize_path)
 from pip.utils.build import BuildDirectory
 from pip.utils.encoding import auto_decode
 from pip.utils.hashes import Hashes, MissingHashes
@@ -492,6 +494,257 @@ class TestUnpackArchives(object):
         assert msg.format(tar_filepath, "evil_symlink", link_path) in str(e.value)
 
         assert not os.path.exists(os.path.join(extract_path, "evil_symlink"))
+
+
+@pytest.mark.parametrize(
+    "is_zip, is_tar, unzip, untar, exception",
+    [
+        # zip file
+        (True, False, True, False, False),
+        # tar file
+        (False, True, False, True, False),
+        # neither zip nor tar
+        (False, False, False, False, True),
+        # ambiguous (both zip and tar)
+        (True, True, False, False, True),
+    ],
+)
+@patch("pip.utils.tarfile")
+@patch("pip.utils.zipfile")
+@patch("pip.utils.untar_file")
+@patch("pip.utils.unzip_file")
+def test_magic_signature_check_logic(
+    mock_unzip,
+    mock_untar,
+    mock_zipfile,
+    mock_tarfile,
+    is_zip,
+    is_tar,
+    unzip,
+    untar,
+    exception,
+):
+    """
+    Test that pip throws an error if file is identified as both zip and tar
+    and all other checks came out undeterministic.
+    """
+    mock_tarfile.is_tarfile.return_value = is_tar
+    mock_zipfile.is_zipfile.return_value = is_zip
+    filename = "ambiguous-file.unknown-extension"
+
+    if exception:
+        with pytest.raises(InstallationError):
+            unpack_file(filename, "any-location", content_type=None, link=None)
+    else:
+        unpack_file(filename, "any-location", content_type=None, link=None)
+
+    assert mock_unzip.call_count == (1 if unzip else 0)
+    assert mock_untar.call_count == (1 if untar else 0)
+    assert mock_tarfile.is_tarfile.call_count == 1
+    assert mock_zipfile.is_zipfile.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "filename, content_type, unzip, untar",
+    [
+        # content_type check
+        ("noname", "application/zip", True, False),
+        ("noname", "application/x-gzip", False, True),
+        # filename check
+        ("ok.zip", None, True, False),
+        ("ok.tar.gz", None, False, True),
+    ],
+)
+@patch("pip.utils.tarfile")
+@patch("pip.utils.zipfile")
+@patch("pip.utils.untar_file")
+@patch("pip.utils.unzip_file")
+def test_check_priority(
+    mock_unzip,
+    mock_untar,
+    mock_zipfile,
+    mock_tarfile,
+    filename,
+    content_type,
+    unzip,
+    untar,
+):
+    """
+    Test the order of priority of checks to ensure
+    we don't use magic signature check unless we have to.
+    """
+    unpack_file(filename, "any-location", content_type=content_type,
+                link=None)
+    assert mock_unzip.call_count == (1 if unzip else 0)
+    assert mock_untar.call_count == (1 if untar else 0)
+    assert mock_zipfile.is_zipfile.call_count == 0
+    assert mock_tarfile.is_tarfile.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "filename, expect_unzip",
+    [
+        ("pkg.zip", True),
+        ("pkg.ZIP", True),
+        ("pkg-1.0-py3-none-any.whl", True),
+        ("pkg.tar.gz", False),
+        ("pkg.TAR.GZ", False),
+        ("pkg.tgz", False),
+        ("pkg.tar", False),
+        ("pkg.tar.bz2", False),
+        ("pkg.tbz", False),
+        ("pkg.tar.xz", False),
+        ("pkg.txz", False),
+        ("pkg.tlz", False),
+        ("pkg.tar.lz", False),
+        ("pkg.tar.lzma", False),
+    ],
+)
+@patch("pip.utils.tarfile")
+@patch("pip.utils.zipfile")
+@patch("pip.utils.untar_file")
+@patch("pip.utils.unzip_file")
+def test_filename_extension_routing(
+    mock_unzip,
+    mock_untar,
+    mock_zipfile,
+    mock_tarfile,
+    filename,
+    expect_unzip,
+):
+    unpack_file(filename, "any-location", content_type=None, link=None)
+    if expect_unzip:
+        assert mock_unzip.call_count == 1
+        assert mock_untar.call_count == 0
+    else:
+        assert mock_untar.call_count == 1
+        assert mock_unzip.call_count == 0
+    assert mock_zipfile.is_zipfile.call_count == 0
+    assert mock_tarfile.is_tarfile.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "content_type, filename, expect_unzip",
+    [
+        ("application/zip", "pkg.tar.gz", True),
+        ("application/x-gzip", "pkg.zip", False),
+        ("application/x-gzip", "pkg.whl", False),
+        ("application/octet-stream", "pkg.zip", True),
+        ("application/octet-stream", "pkg.tar.gz", False),
+    ],
+)
+@patch("pip.utils.tarfile")
+@patch("pip.utils.zipfile")
+@patch("pip.utils.untar_file")
+@patch("pip.utils.unzip_file")
+def test_content_type_vs_filename_priority(
+    mock_unzip,
+    mock_untar,
+    mock_zipfile,
+    mock_tarfile,
+    content_type,
+    filename,
+    expect_unzip,
+):
+    unpack_file(filename, "any-location", content_type=content_type,
+                link=None)
+    if expect_unzip:
+        assert mock_unzip.call_count == 1
+        assert mock_untar.call_count == 0
+    else:
+        assert mock_untar.call_count == 1
+        assert mock_unzip.call_count == 0
+    assert mock_zipfile.is_zipfile.call_count == 0
+    assert mock_tarfile.is_tarfile.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "filename, flatten", [("pkg.whl", False), ("pkg.zip", True)]
+)
+@patch("pip.utils.unzip_file")
+def test_flatten_only_for_non_whl(mock_unzip, filename, flatten):
+    unpack_file(filename, "any-location", content_type=None, link=None)
+    assert mock_unzip.call_args[1]["flatten"] is flatten
+
+
+def _write_polyglot(path):
+    """Write a tar.gz with a zip appended; both views contain payload.txt."""
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo("pkg/payload.txt")
+        info.size = 8
+        tar.addfile(info, io.BytesIO(b"from-tar"))
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("pkg/payload.txt", "from-zip")
+    with open(path, "wb") as fp:
+        fp.write(tar_buf.getvalue() + zip_buf.getvalue())
+
+
+@pytest.mark.parametrize(
+    "filename, content_type, expected",
+    [
+        ("pkg.tar.gz", None, b"from-tar"),
+        ("pkg.tgz", None, b"from-tar"),
+        ("pkg.zip", None, b"from-zip"),
+        ("pkg.tar.gz", "application/zip", b"from-zip"),
+        ("pkg.unknown", "application/x-gzip", b"from-tar"),
+    ],
+)
+def test_polyglot_routing(tmpdir, filename, content_type, expected):
+    archive = os.path.join(str(tmpdir), filename)
+    _write_polyglot(archive)
+    out = os.path.join(str(tmpdir), "out")
+    unpack_file(archive, out, content_type=content_type, link=None)
+    with open(os.path.join(out, "payload.txt"), "rb") as fp:
+        assert fp.read() == expected
+
+
+@pytest.mark.parametrize("content_type", [None, "text/html"])
+@patch("pip.vcs.subversion.Subversion")
+def test_polyglot_ambiguous_name_rejected(mock_svn, tmpdir, content_type):
+    archive = os.path.join(str(tmpdir), "pkg.bin")
+    _write_polyglot(archive)
+    out = os.path.join(str(tmpdir), "out")
+    with pytest.raises(InstallationError):
+        unpack_file(archive, out, content_type=content_type,
+                    link=Mock(url="http://svn.example.com/repo/"))
+    assert not os.path.exists(os.path.join(out, "payload.txt"))
+    assert mock_svn.call_count == 0
+
+
+SVN_INDEX_PAGE = (
+    '<html><head><title>repo - Revision 42: /trunk</title></head>\n'
+    '<body><h2>repo - Revision 42: /trunk</h2>\n'
+    '<em>Powered by <a href="http://subversion.tigris.org/">'
+    'Subversion</a> version 1.9.7.</em>\n'
+    '</body></html>\n'
+)
+
+
+@patch("pip.vcs.subversion.Subversion")
+def test_unpack_svn_page_still_supported(mock_svn, tmpdir):
+    """
+    A text/html Subversion index page that is neither a zip nor a tar
+    is still handed off to the Subversion backend.
+    """
+    page = os.path.join(str(tmpdir), "trunk")
+    with open(page, "wb") as fp:
+        fp.write(SVN_INDEX_PAGE.encode("utf-8"))
+    out = os.path.join(str(tmpdir), "out")
+    link = Mock(url="http://svn.example.com/repo/trunk")
+    unpack_file(page, out, content_type="text/html", link=link)
+    mock_svn.assert_called_once_with("svn+http://svn.example.com/repo/trunk")
+    mock_svn.return_value.unpack.assert_called_once_with(out)
+
+
+def test_unpack_html_non_svn_page_rejected(tmpdir):
+    page = os.path.join(str(tmpdir), "index")
+    with open(page, "wb") as fp:
+        fp.write(b"<html><body>not an archive</body></html>\n")
+    with pytest.raises(InstallationError):
+        unpack_file(page, os.path.join(str(tmpdir), "out"),
+                    content_type="text/html", link=None)
 
 
 class Failer:
