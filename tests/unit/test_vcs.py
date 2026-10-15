@@ -1,10 +1,13 @@
+import os
+
 import pytest
 from tests.lib import pyversion
 from pip.vcs import VersionControl
 from pip.vcs.bazaar import Bazaar
 from pip.vcs.git import Git
+from pip.vcs.mercurial import Mercurial
 from pip.vcs.subversion import Subversion
-from mock import Mock
+from mock import Mock, call
 from pip._vendor.packaging.version import parse as parse_version
 
 if pyversion >= '3':
@@ -112,6 +115,72 @@ def test_bazaar_simple_urls():
     assert launchpad_bzr_repo.get_url_rev() == (
         'lp:MyLaunchpadProject', None,
     )
+
+
+def test_mercurial_get_base_rev_args():
+    assert Mercurial.get_base_rev_args('123') == ['--rev=123']
+
+
+# A revision crafted to look like an hg option: if passed as a standalone
+# argument hg would treat it as ``--config`` and run an arbitrary command.
+MALICIOUS_HG_REV = '--config=alias.update=!id'
+
+
+def _mercurial_with_rev(rev):
+    url = 'https://hg.example.com/MyProject'
+    hg = Mercurial(url='hg+%s@%s#egg=MyProject' % (url, rev))
+    hg.run_command = Mock()
+    return hg, url
+
+
+@pytest.mark.parametrize('rev', [
+    '123',
+    '0.2.5',
+    '-r',
+    MALICIOUS_HG_REV,
+])
+def test_mercurial_obtain_clone_passes_rev_as_option_value(tmpdir, rev):
+    hg, url = _mercurial_with_rev(rev)
+    dest = os.path.join(str(tmpdir), 'checkout')
+
+    hg.obtain(dest)
+
+    assert hg.run_command.call_args_list == [
+        call(['clone', '--noupdate', '-q', url, dest]),
+        call(['update', '-q', '--rev=%s' % rev], cwd=dest),
+    ]
+
+
+def test_mercurial_obtain_update_passes_rev_as_option_value(tmpdir):
+    hg, url = _mercurial_with_rev(MALICIOUS_HG_REV)
+    dest = os.path.join(str(tmpdir), 'checkout')
+    os.makedirs(os.path.join(dest, '.hg'))
+    hg.get_url = Mock(return_value=url)
+
+    hg.obtain(dest)
+
+    assert hg.run_command.call_args_list == [
+        call(['pull', '-q'], cwd=dest),
+        call(['update', '-q', '--rev=%s' % MALICIOUS_HG_REV], cwd=dest),
+    ]
+
+
+def test_mercurial_obtain_switch_passes_rev_as_option_value(
+        tmpdir, monkeypatch):
+    hg, url = _mercurial_with_rev(MALICIOUS_HG_REV)
+    dest = os.path.join(str(tmpdir), 'checkout')
+    os.makedirs(os.path.join(dest, '.hg'))
+    other_url = 'https://hg.example.com/OtherProject'
+    with open(os.path.join(dest, '.hg', 'hgrc'), 'w') as fp:
+        fp.write('[paths]\ndefault = %s\n' % other_url)
+    hg.get_url = Mock(return_value=other_url)
+    monkeypatch.setattr('pip.vcs.ask_path_exists', lambda *args: 's')
+
+    hg.obtain(dest)
+
+    assert hg.run_command.call_args_list == [
+        call(['update', '-q', '--rev=%s' % MALICIOUS_HG_REV], cwd=dest),
+    ]
 
 
 def test_subversion_remove_auth_from_url():

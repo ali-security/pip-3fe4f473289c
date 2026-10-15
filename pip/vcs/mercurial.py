@@ -19,6 +19,13 @@ class Mercurial(VersionControl):
     repo_name = 'clone'
     schemes = ('hg', 'hg+http', 'hg+https', 'hg+ssh', 'hg+static-http')
 
+    @staticmethod
+    def get_base_rev_args(rev):
+        # Pass the revision as the value of a single ``--rev=<rev>`` argument
+        # so that a revision beginning with "-" (e.g. "--config=...") can
+        # never be interpreted by hg as a separate command-line option.
+        return ['--rev=%s' % rev]
+
     def export(self, location):
         """Export the Hg repository at the url to the destination location"""
         temp_dir = tempfile.mkdtemp('-export', 'pip-')
@@ -51,7 +58,7 @@ class Mercurial(VersionControl):
     def obtain(self, dest):
         url, rev = self.get_url_rev()
         if rev:
-            rev_options = [rev]
+            rev_options = self.get_base_rev_args(rev)
             rev_display = ' (to revision %s)' % rev
         else:
             rev_options = []
